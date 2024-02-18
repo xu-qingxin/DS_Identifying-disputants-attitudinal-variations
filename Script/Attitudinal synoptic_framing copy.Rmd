@@ -1,0 +1,1680 @@
+---
+title: 'A synoptic view of attitudinal disposition, framing, with invocation'
+author: "Qingxin Xu"
+date: "16/07/2023"
+output:
+  word_document: default
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup}
+#About the analysis: inscriptions and invocations; no filtering for counter>1; framing includes scaling, disclaim, proclaim, entertain, attribute
+
+#install.packages("tidyverse")
+library(tidyverse)
+library(ggpubr)
+library(ggplot2)
+#library(GGally)
+library(cluster)
+#options(tibble.print_min = Inf)
+
+```
+
+```{r pca package}
+#install.packages(c("FactoMineR", "factoextra"))
+library("FactoMineR")
+library("factoextra")
+```
+
+```{r mymerge function}
+mymerge <- function (x, y) {
+  merge(x, y, by=c("speaker"), all=TRUE)
+}
+```
+
+```{r import data}
+#load csv files
+filename = list.files(getwd(), pattern = "csv", full.names=T)
+d = data.frame()
+bin = data.frame()
+for (i in 1:length(filename)){
+  bin = read.csv(filename[i], row.names=NULL)
+  bin = mutate(bin, filename = filename[i])
+  d = rbind(d, bin)
+}
+```
+
+
+```{r wrangle, include=TRUE}
+#select speakers
+df = d%>%
+  mutate_if(is.factor, as.character)%>%
+  mutate(turn = as.numeric(turn))%>%
+  filter(grepl("Husband", speaker) | grepl("Wife", speaker))%>%
+  mutate(stage = ifelse(grepl("H01", speaker) & turn > 0 & turn <= 137, "discussing problem",
+                        ifelse(grepl("H02", speaker) & turn > 0 &turn <= 140, "discussing problem",
+                               ifelse(grepl("H03", speaker) & turn > 0 &turn <= 148, "discussing problem",
+                                      ifelse(grepl("W01", speaker) & turn > 0 &turn <= 96, "discussing problem",
+                                             ifelse(grepl("W02", speaker) & turn > 0 &turn <= 98, "discussing problem",
+                                                    ifelse(grepl("W03", speaker) & turn > 0 &turn <= 202, "discussing problem", "mediation"))))))) %>%
+  filter(stage == "discussing problem") %>%
+  mutate(gender = ifelse(grepl("Husband", speaker), "male", "female")) %>%
+  mutate(target = ifelse(grepl("antagonist", target.detail), "antagonist",
+                         ifelse(grepl("self", target.detail), "self","other"))) %>%
+  mutate(position = ifelse(grepl("Husband_H0", speaker), "wayward husband",
+                        ifelse(grepl("Wife_H0", speaker), "aggrieved wife",
+                               ifelse(grepl("Wife_W0", speaker), "wayward wife", "aggrieved husband")))) %>%
+  mutate(waywardness = ifelse(grepl("wayward", position), "wayward", "aggrieved"))%>%
+  mutate(graduation = ifelse(grepl("up", graduation.detail), "up",
+                             ifelse(grepl("down", graduation.detail), "down", "noscale")))%>%
+  mutate(engagement = ifelse(grepl("monogloss", engagement.detail), "monogloss",
+                             ifelse(grepl("contract", engagement.detail), "contract",
+                                    ifelse(grepl("entertain", engagement.detail), "entertain", NA))))%>%
+  mutate(counter = 1)
+
+```
+
+```{r total attitude count, include=TRUE}
+totalAttitude = df %>%
+  filter(valence != "")%>%
+  mutate(total = 1) %>%
+  group_by(speaker)%>%
+  summarise(total = sum(total)) 
+totalAttitude
+```
+
+```{r add total counts, include=TRUE}
+df$total <- totalAttitude$total[match(df$speaker, totalAttitude$speaker)]
+```
+
+```{r attitudinal complex count, include=TRUE}
+df_attitude <-df%>%
+  filter(valence != "")%>%
+  select(valence, attitude, target, explicitness)%>%
+  filter(attitude != "affect")%>%
+  #filter(target != "other")%>%
+  mutate(counter = 1)%>%
+  mutate(complex = paste(valence, attitude, target, sep = "_"))%>%
+  group_by(complex, explicitness)%>%
+  mutate(total = sum(counter))%>%
+  mutate(total = ifelse(explicitness == "inscribe", total, -1*total))%>%
+  select(explicitness, complex, total)
+  
+df_attitude
+```
+
+```{r df affect, include=TRUE}
+df_affect <-df%>%
+  mutate(complex = ifelse(trigger == "antagonist", "triggered_affect",
+         ifelse(trigger == "observed", "observed_affect", "other")))%>%
+  filter(complex != "other")%>%
+  mutate(explicitness = str_replace(explicitness, "invoke", "inscribe"))%>%
+  mutate(counter = 1)%>%
+  select(explicitness, complex, counter)%>%
+  group_by(complex, explicitness)%>%
+  mutate(total = sum(counter))%>%
+  select(explicitness, complex, total)
+
+df_affect
+```
+
+```{r combine complex dataframes, include=TRUE}
+df_complex <- bind_rows(df_attitude, df_affect)
+df_complex
+```
+
+```{r complex compare bar, include=TRUE}
+#png("complex comparison.png", units="in", width=10, height=5, res=200)
+breaks_values <- pretty(df_complex$total)
+bar_complex <-
+  ggplot(df_complex, aes(fct_reorder(complex, total), y = total, fill = explicitness, label= abs(total)))+
+  geom_bar(stat = "identity", position="identity")+
+  labs(x = "Attitudinal complex", y = "invoke   inscribe")+
+  geom_text(size = 4, hjust=0.9)+
+  geom_hline(yintercept = 0)+
+  coord_flip()+
+  scale_y_continuous(breaks = breaks_values,
+                     labels = abs(breaks_values))+
+  scale_fill_brewer(palette="Paired")+
+  theme_minimal()+
+  theme(plot.title = element_text(hjust = 0.5), axis.text.y = element_text(size=11, hjust = 0, colour = "black"), legend.text = element_text(size = 11), axis.title.x = element_text(hjust = 0.85))
+bar_complex
+```
+
+
+```{r NJA monogloss noscale count, include=TRUE}
+df_NJA_monogloss_noscale= df%>%
+  filter(valence == "-ve") %>%
+  filter(explicitness == "inscribe") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "antagonist") %>%
+  filter(engagement == "monogloss")%>%
+  filter(graduation == "noscale")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(NJA_monogloss_noscale = round(counter/total *100, 2))%>%
+  ungroup()
+df_NJA_monogloss_noscale
+```
+
+```{r invo NJA count, include=TRUE}
+df_invo_NJA= df%>%
+  filter(valence == "-ve") %>%
+  filter(explicitness == "invoke") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "antagonist") %>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(invo_NJA = round(counter/total *100, 2))%>%
+  ungroup()
+df_invo_NJA
+```
+
+```{r invo NJA monogloss noscale count, include=TRUE}
+df_invo_NJA_monogloss_noscale= df%>%
+  filter(valence == "-ve") %>%
+  filter(explicitness == "invoke") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "antagonist") %>%
+  filter(engagement == "monogloss")%>%
+  filter(graduation == "noscale")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(invo_NJA_monogloss_noscale = round(counter/total *100, 2))%>%
+  ungroup()
+df_invo_NJA_monogloss_noscale
+```
+
+```{r NJA monogloss up count, include=TRUE}
+df_NJA_monogloss_up= df%>%
+  filter(valence == "-ve") %>%
+  filter(explicitness == "inscribe") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "antagonist") %>%
+  filter(engagement == "monogloss")%>%
+  filter(graduation == "up")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(NJA_monogloss_up = round(counter/total *100, 2))
+df_NJA_monogloss_up
+```
+
+```{r invo NJA monogloss up count, include=TRUE}
+df_invo_NJA_monogloss_up= df%>%
+  filter(valence == "-ve") %>%
+  filter(explicitness == "invoke") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "antagonist") %>%
+  filter(engagement == "monogloss")%>%
+  filter(graduation == "up")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(invo_NJA_monogloss_up = round(counter/total *100, 2))
+df_invo_NJA_monogloss_up
+```
+
+```{r NJA monogloss down count, include=TRUE}
+df_NJA_monogloss_down= df%>%
+  filter(valence == "-ve") %>%
+  filter(explicitness == "inscribe") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "antagonist") %>%
+  filter(engagement == "monogloss")%>%
+  filter(graduation == "down")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(NJA_monogloss_down = round(counter/total *100, 2))
+df_NJA_monogloss_down
+```
+
+```{r invo NJA monogloss down count, include=TRUE}
+df_invo_NJA_monogloss_down= df%>%
+  filter(valence == "-ve") %>%
+  filter(explicitness == "invoke") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "antagonist") %>%
+  filter(engagement == "monogloss")%>%
+  filter(graduation == "down")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(invo_NJA_monogloss_down = round(counter/total *100, 2))
+df_invo_NJA_monogloss_down
+```
+
+
+```{r NJA contract noscale count, include=TRUE}
+df_NJA_contract_noscale= df%>%
+  filter(valence == "-ve") %>%
+  filter(explicitness == "inscribe") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "antagonist") %>%
+  filter(engagement == "contract")%>%
+  filter(graduation == "noscale")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(NJA_contract_noscale = round(counter/total *100, 2))%>%
+  ungroup()
+df_NJA_contract_noscale
+```
+
+```{r invo NJA contract noscale count, include=TRUE}
+df_invo_NJA_contract_noscale= df%>%
+  filter(valence == "-ve") %>%
+  filter(explicitness == "invoke") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "antagonist") %>%
+  filter(engagement == "contract")%>%
+  filter(graduation == "noscale")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(invo_NJA_contract_noscale = round(counter/total *100, 2))%>%
+  ungroup()
+df_invo_NJA_contract_noscale
+```
+
+```{r NJA contract up count, include=TRUE}
+df_NJA_contract_up= df%>%
+  filter(valence == "-ve") %>%
+  filter(explicitness == "inscribe") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "antagonist") %>%
+  filter(engagement == "contract")%>%
+  filter(graduation == "up")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(NJA_contract_up = round(counter/total *100, 2))
+df_NJA_contract_up
+```
+
+```{r invo NJA contract up count, include=TRUE}
+df_invo_NJA_contract_up= df%>%
+  filter(valence == "-ve") %>%
+  filter(explicitness == "invoke") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "antagonist") %>%
+  filter(engagement == "contract")%>%
+  filter(graduation == "up")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(invo_NJA_contract_up = round(counter/total *100, 2))
+df_invo_NJA_contract_up
+```
+
+```{r NJA contract down count, include=TRUE}
+df_NJA_contract_down= df%>%
+  filter(valence == "-ve") %>%
+  filter(explicitness == "inscribe") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "antagonist") %>%
+  filter(engagement == "contract")%>%
+  filter(graduation == "down")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(NJA_contract_down = round(counter/total *100, 2))
+df_NJA_contract_down
+```
+
+```{r invo NJA contract down count, include=TRUE}
+df_invo_NJA_contract_down= df%>%
+  filter(valence == "-ve") %>%
+  filter(explicitness == "invoke") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "antagonist") %>%
+  filter(engagement == "contract")%>%
+  filter(graduation == "down")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(invo_NJA_contract_down = round(counter/total *100, 2))
+df_invo_NJA_contract_down
+```
+
+
+```{r NJA entertain noscale count, include=TRUE}
+df_NJA_entertain_noscale= df%>%
+  filter(valence == "-ve") %>%
+  filter(explicitness == "inscribe") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "antagonist") %>%
+  filter(engagement == "entertain")%>%
+  filter(graduation == "noscale")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(NJA_entertain_noscale = round(counter/total *100, 2))
+df_NJA_entertain_noscale
+```
+
+```{r invo NJA entertain noscale count, include=TRUE}
+df_invo_NJA_entertain_noscale= df%>%
+  filter(valence == "-ve") %>%
+  filter(explicitness == "invoke") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "antagonist") %>%
+  filter(engagement == "entertain")%>%
+  filter(graduation == "noscale")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(invo_NJA_entertain_noscale = round(counter/total *100, 2))
+df_invo_NJA_entertain_noscale
+```
+
+```{r NJA entertain up count, include=TRUE}
+df_NJA_entertain_up= df%>%
+  filter(valence == "-ve") %>%
+  filter(explicitness == "inscribe") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "antagonist") %>%
+  filter(engagement == "entertain")%>%
+  filter(graduation == "up")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(NJA_entertain_up = round(counter/total *100, 2))
+df_NJA_entertain_up
+```
+
+```{r invo NJA entertain up count, include=TRUE}
+df_invo_NJA_entertain_up= df%>%
+  filter(valence == "-ve") %>%
+  filter(explicitness == "invoke") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "antagonist") %>%
+  filter(engagement == "entertain")%>%
+  filter(graduation == "up")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(invo_NJA_entertain_up = round(counter/total *100, 2))
+df_invo_NJA_entertain_up
+```
+
+```{r NJA entertain down count, include=TRUE}
+df_NJA_entertain_down= df%>%
+  filter(valence == "-ve") %>%
+  filter(explicitness == "inscribe") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "antagonist") %>%
+  filter(engagement == "entertain")%>%
+  filter(graduation == "down")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(NJA_entertain_down = round(counter/total *100, 2))
+df_NJA_entertain_down
+```
+
+```{r invo NJA entertain down count, include=TRUE}
+df_invo_NJA_entertain_down= df%>%
+  filter(valence == "-ve") %>%
+  filter(explicitness == "invoke") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "antagonist") %>%
+  filter(engagement == "entertain")%>%
+  filter(graduation == "down")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(invo_NJA_entertain_down = round(counter/total *100, 2))
+df_invo_NJA_entertain_down
+```
+
+```{r PJA monogloss noscale count, include=TRUE}
+df_PJA_monogloss_noscale= df%>%
+  filter(valence == "+ve") %>%
+  filter(explicitness == "inscribe") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "antagonist") %>%
+  filter(engagement == "monogloss")%>%
+  filter(graduation == "noscale")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(PJA_monogloss_noscale = round(counter/total *100, 2))%>%
+  ungroup()
+df_PJA_monogloss_noscale
+```
+
+```{r invo PJA count, include=TRUE}
+df_invo_PJA= df%>%
+  filter(valence == "+ve") %>%
+  filter(explicitness == "invoke") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "antagonist") %>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(invo_PJA = round(counter/total *100, 2))%>%
+  ungroup()
+df_invo_PJA
+```
+
+```{r invo PJA monogloss noscale count, include=TRUE}
+df_invo_PJA_monogloss_noscale= df%>%
+  filter(valence == "+ve") %>%
+  filter(explicitness == "invoke") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "antagonist") %>%
+  filter(engagement == "monogloss")%>%
+  filter(graduation == "noscale")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(invo_PJA_monogloss_noscale = round(counter/total *100, 2))%>%
+  ungroup()
+df_invo_PJA_monogloss_noscale
+```
+
+```{r PJA monogloss up count, include=TRUE}
+df_PJA_monogloss_up= df%>%
+  filter(valence == "+ve") %>%
+  filter(explicitness == "inscribe") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "antagonist") %>%
+  filter(engagement == "monogloss")%>%
+  filter(graduation == "up")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(PJA_monogloss_up = round(counter/total *100, 2))
+df_PJA_monogloss_up
+```
+
+```{r invo PJA monogloss up count, include=TRUE}
+df_invo_PJA_monogloss_up= df%>%
+  filter(valence == "+ve") %>%
+  filter(explicitness == "invoke") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "antagonist") %>%
+  filter(engagement == "monogloss")%>%
+  filter(graduation == "up")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(invo_PJA_monogloss_up = round(counter/total *100, 2))
+df_invo_PJA_monogloss_up
+```
+
+```{r PJA monogloss down count, include=TRUE}
+df_PJA_monogloss_down= df%>%
+  filter(valence == "+ve") %>%
+  filter(explicitness == "inscribe") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "antagonist") %>%
+  filter(engagement == "monogloss")%>%
+  filter(graduation == "down")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(PJA_monogloss_down = round(counter/total *100, 2))
+df_PJA_monogloss_down
+```
+
+```{r invo PJA monogloss down count, include=TRUE}
+df_invo_PJA_monogloss_down= df%>%
+  filter(valence == "+ve") %>%
+  filter(explicitness == "invoke") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "antagonist") %>%
+  filter(engagement == "monogloss")%>%
+  filter(graduation == "down")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(invo_PJA_monogloss_down = round(counter/total *100, 2))
+df_invo_PJA_monogloss_down
+```
+
+```{r PJA contract noscale count, include=TRUE}
+df_PJA_contract_noscale= df%>%
+  filter(valence == "+ve") %>%
+  filter(explicitness == "inscribe") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "antagonist") %>%
+  filter(engagement == "contract")%>%
+  filter(graduation == "noscale")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(PJA_contract_noscale = round(counter/total *100, 2))%>%
+  ungroup()
+df_PJA_contract_noscale
+```
+
+```{r invo PJA contract noscale count, include=TRUE}
+df_invo_PJA_contract_noscale= df%>%
+  filter(valence == "+ve") %>%
+  filter(explicitness == "invoke") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "antagonist") %>%
+  filter(engagement == "contract")%>%
+  filter(graduation == "noscale")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(invo_PJA_contract_noscale = round(counter/total *100, 2))%>%
+  ungroup()
+df_invo_PJA_contract_noscale
+```
+
+
+```{r PJA contract up count, include=TRUE}
+df_PJA_contract_up= df%>%
+  filter(valence == "+ve") %>%
+  filter(explicitness == "inscribe") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "antagonist") %>%
+  filter(engagement == "contract")%>%
+  filter(graduation == "up")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(PJA_contract_up = round(counter/total *100, 2))
+df_PJA_contract_up
+```
+
+```{r invo PJA contract up count, include=TRUE}
+df_invo_PJA_contract_up= df%>%
+  filter(valence == "+ve") %>%
+  filter(explicitness == "invoke") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "antagonist") %>%
+  filter(engagement == "contract")%>%
+  filter(graduation == "up")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(invo_PJA_contract_up = round(counter/total *100, 2))
+df_invo_PJA_contract_up
+```
+
+```{r PJA contract down count, include=TRUE}
+df_PJA_contract_down= df%>%
+  filter(valence == "+ve") %>%
+  filter(explicitness == "inscribe") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "antagonist") %>%
+  filter(engagement == "contract")%>%
+  filter(graduation == "down")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(PJA_contract_down = round(counter/total *100, 2))
+df_PJA_contract_down
+```
+
+
+```{r invo PJA contract down count, include=TRUE}
+df_invo_PJA_contract_down= df%>%
+  filter(valence == "+ve") %>%
+  filter(explicitness == "invoke") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "antagonist") %>%
+  filter(engagement == "contract")%>%
+  filter(graduation == "down")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(invo_PJA_contract_down = round(counter/total *100, 2))
+df_invo_PJA_contract_down
+```
+
+```{r PJA entertain noscale count, include=TRUE}
+df_PJA_entertain_noscale= df%>%
+  filter(valence == "+ve") %>%
+  filter(explicitness == "inscribe") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "antagonist") %>%
+  filter(engagement == "entertain")%>%
+  filter(graduation == "noscale")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(PJA_entertain_noscale = round(counter/total *100, 2))
+df_PJA_entertain_noscale
+```
+
+```{r invo PJA entertain noscale count, include=TRUE}
+df_invo_PJA_entertain_noscale= df%>%
+  filter(valence == "+ve") %>%
+  filter(explicitness == "invoke") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "antagonist") %>%
+  filter(engagement == "entertain")%>%
+  filter(graduation == "noscale")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(invo_PJA_entertain_noscale = round(counter/total *100, 2))
+df_invo_PJA_entertain_noscale
+```
+
+```{r PJA entertain up count, include=TRUE}
+df_PJA_entertain_up= df%>%
+  filter(valence == "+ve") %>%
+  filter(explicitness == "inscribe") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "antagonist") %>%
+  filter(engagement == "entertain")%>%
+  filter(graduation == "up")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(PJA_entertain_up = round(counter/total *100, 2))
+df_PJA_entertain_up
+```
+
+```{r invo PJA entertain up count, include=TRUE}
+df_invo_PJA_entertain_up= df%>%
+  filter(valence == "+ve") %>%
+  filter(explicitness == "invokee") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "antagonist") %>%
+  filter(engagement == "entertain")%>%
+  filter(graduation == "up")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(invo_PJA_entertain_up = round(counter/total *100, 2))
+df_invo_PJA_entertain_up
+```
+
+```{r PJA entertain down count, include=TRUE}
+df_PJA_entertain_down= df%>%
+  filter(valence == "+ve") %>%
+  filter(explicitness == "inscribe") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "antagonist") %>%
+  filter(engagement == "entertain")%>%
+  filter(graduation == "down")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(PJA_entertain_down = round(counter/total *100, 2))
+df_PJA_entertain_down
+```
+
+```{r invo PJA entertain down count, include=TRUE}
+df_invo_PJA_entertain_down= df%>%
+  filter(valence == "+ve") %>%
+  filter(explicitness == "invoke") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "antagonist") %>%
+  filter(engagement == "entertain")%>%
+  filter(graduation == "down")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(invo_PJA_entertain_down = round(counter/total *100, 2))
+df_invo_PJA_entertain_down
+```
+
+
+```{r PJS monogloss noscale count, include=TRUE}
+df_PJS_monogloss_noscale= df%>%
+  filter(valence == "+ve") %>%
+  filter(explicitness == "inscribe") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "self") %>%
+  filter(engagement == "monogloss")%>%
+  filter(graduation == "noscale")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(PJS_monogloss_noscale = round(counter/total *100, 2))
+df_PJS_monogloss_noscale
+```
+```{r invo PJS count, include=TRUE}
+df_invo_PJS= df%>%
+  filter(valence == "+ve") %>%
+  filter(explicitness == "invoke") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "self") %>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(invo_PJS = round(counter/total *100, 2))
+df_invo_PJS
+```
+
+```{r invo PJS monogloss noscale count, include=TRUE}
+df_invo_PJS_monogloss_noscale= df%>%
+  filter(valence == "+ve") %>%
+  filter(explicitness == "invoke") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "self") %>%
+  filter(engagement == "monogloss")%>%
+  filter(graduation == "noscale")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(invo_PJS_monogloss_noscale = round(counter/total *100, 2))
+df_invo_PJS_monogloss_noscale
+```
+
+
+```{r PJS monogloss up count, include=TRUE}
+df_PJS_monogloss_up= df%>%
+  filter(valence == "+ve") %>%
+  filter(explicitness == "inscribe") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "self") %>%
+  filter(engagement == "monogloss")%>%
+  filter(graduation == "up")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(PJS_monogloss_up = round(counter/total *100, 2))
+df_PJS_monogloss_up
+```
+
+```{r invo PJS monogloss up count, include=TRUE}
+df_invo_PJS_monogloss_up= df%>%
+  filter(valence == "+ve") %>%
+  filter(explicitness == "invoke") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "self") %>%
+  filter(engagement == "monogloss")%>%
+  filter(graduation == "up")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(invo_PJS_monogloss_up = round(counter/total *100, 2))
+df_invo_PJS_monogloss_up
+```
+
+
+
+```{r PJS monogloss down count, include=TRUE}
+df_PJS_monogloss_down= df%>%
+  filter(valence == "+ve") %>%
+  filter(explicitness == "inscribe") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "self") %>%
+  filter(engagement == "monogloss")%>%
+  filter(graduation == "down")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(PJS_monogloss_down = round(counter/total *100, 2))
+df_PJS_monogloss_down
+```
+
+```{r invo PJS monogloss down count, include=TRUE}
+df_invo_PJS_monogloss_down= df%>%
+  filter(valence == "+ve") %>%
+  filter(explicitness == "invoke") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "self") %>%
+  filter(engagement == "monogloss")%>%
+  filter(graduation == "down")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(invo_PJS_monogloss_down = round(counter/total *100, 2))
+df_invo_PJS_monogloss_down
+```
+
+
+```{r PJS contract noscale count, include=TRUE}
+df_PJS_contract_noscale= df%>%
+  filter(valence == "+ve") %>%
+  filter(explicitness == "inscribe") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "self") %>%
+  filter(engagement == "contract")%>%
+  filter(graduation == "noscale")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(PJS_contract_noscale = round(counter/total *100, 2))
+df_PJS_contract_noscale
+```
+
+```{r invo PJS contract noscale count, include=TRUE}
+df_invo_PJS_contract_noscale= df%>%
+  filter(valence == "+ve") %>%
+  filter(explicitness == "invoke") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "self") %>%
+  filter(engagement == "contract")%>%
+  filter(graduation == "noscale")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(invo_PJS_contract_noscale = round(counter/total *100, 2))
+df_invo_PJS_contract_noscale
+```
+
+```{r PJS contract up count, include=TRUE}
+df_PJS_contract_up= df%>%
+  filter(valence == "+ve") %>%
+  filter(explicitness == "inscribe") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "self") %>%
+  filter(engagement == "contract")%>%
+  filter(graduation == "up")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(PJS_contract_up = round(counter/total *100, 2))
+df_PJS_contract_up
+```
+
+```{r invo PJS contract up count, include=TRUE}
+df_invo_PJS_contract_up= df%>%
+  filter(valence == "+ve") %>%
+  filter(explicitness == "invoke") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "self") %>%
+  filter(engagement == "contract")%>%
+  filter(graduation == "up")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(invo_PJS_contract_up = round(counter/total *100, 2))
+df_invo_PJS_contract_up
+```
+
+```{r PJS contract down count, include=TRUE}
+df_PJS_contract_down= df%>%
+  filter(valence == "+ve") %>%
+  filter(explicitness == "inscribe") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "self") %>%
+  filter(engagement == "contract")%>%
+  filter(graduation == "down")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(PJS_contract_down = round(counter/total *100, 2))
+df_PJS_contract_down
+```
+
+```{r invo PJS contract down count, include=TRUE}
+df_invo_PJS_contract_down= df%>%
+  filter(valence == "+ve") %>%
+  filter(explicitness == "invoke") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "self") %>%
+  filter(engagement == "contract")%>%
+  filter(graduation == "down")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(invo_PJS_contract_down = round(counter/total *100, 2))
+df_invo_PJS_contract_down
+```
+
+```{r PJS entertain noscale count, include=TRUE}
+df_PJS_entertain_noscale= df%>%
+  filter(valence == "+ve") %>%
+  filter(explicitness == "inscribe") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "self") %>%
+  filter(engagement == "entertain")%>%
+  filter(graduation == "noscale")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(PJS_entertain_noscale = round(counter/total *100, 2))
+df_PJS_entertain_noscale
+```
+
+```{r invo PJS entertain noscale count, include=TRUE}
+df_invo_PJS_entertain_noscale= df%>%
+  filter(valence == "+ve") %>%
+  filter(explicitness == "invoke") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "self") %>%
+  filter(engagement == "entertain")%>%
+  filter(graduation == "noscale")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(invo_PJS_entertain_noscale = round(counter/total *100, 2))
+df_invo_PJS_entertain_noscale
+```
+
+```{r PJS entertain up count, include=TRUE}
+df_PJS_entertain_up= df%>%
+  filter(valence == "+ve") %>%
+  filter(explicitness == "inscribe") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "self") %>%
+  filter(engagement == "entertain")%>%
+  filter(graduation == "up")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(PJS_entertain_up = round(counter/total *100, 2))
+df_PJS_entertain_up
+```
+
+```{r invo PJS entertain up count, include=TRUE}
+df_invo_PJS_entertain_up= df%>%
+  filter(valence == "+ve") %>%
+  filter(explicitness == "invoke") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "self") %>%
+  filter(engagement == "entertain")%>%
+  filter(graduation == "up")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(invo_PJS_entertain_up = round(counter/total *100, 2))
+df_invo_PJS_entertain_up
+```
+
+```{r PJS entertain down count, include=TRUE}
+df_PJS_entertain_down= df%>%
+  filter(valence == "+ve") %>%
+  filter(explicitness == "inscribe") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "self") %>%
+  filter(engagement == "entertain")%>%
+  filter(graduation == "down")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(PJS_entertain_down = round(counter/total *100, 2))
+df_PJS_entertain_down
+```
+
+```{r invo PJS entertain down count, include=TRUE}
+df_invo_PJS_entertain_down= df%>%
+  filter(valence == "+ve") %>%
+  filter(explicitness == "invokee") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "self") %>%
+  filter(engagement == "entertain")%>%
+  filter(graduation == "down")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(invo_PJS_entertain_down = round(counter/total *100, 2))
+df_invo_PJS_entertain_down
+```
+
+
+```{r NJS monogloss noscale count, include=TRUE}
+df_NJS_monogloss_noscale= df%>%
+  filter(valence == "-ve") %>%
+  filter(explicitness == "inscribe") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "self") %>%
+  filter(engagement == "monogloss")%>%
+  filter(graduation == "noscale")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(NJS_monogloss_noscale = round(counter/total *100, 2))
+df_NJS_monogloss_noscale
+```
+
+```{r invo NJS count, include=TRUE}
+df_invo_NJS= df%>%
+  filter(valence == "-ve") %>%
+  filter(explicitness == "invoke") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "self") %>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(invo_NJS = round(counter/total *100, 2))
+df_invo_NJS
+```
+
+```{r invo NJS monogloss noscale count, include=TRUE}
+df_invo_NJS_monogloss_noscale= df%>%
+  filter(valence == "-ve") %>%
+  filter(explicitness == "invoke") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "self") %>%
+  filter(engagement == "monogloss")%>%
+  filter(graduation == "noscale")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(invo_NJS_monogloss_noscale = round(counter/total *100, 2))
+df_invo_NJS_monogloss_noscale
+```
+
+
+```{r NJS monogloss up count, include=TRUE}
+df_NJS_monogloss_up= df%>%
+  filter(valence == "-ve") %>%
+  filter(explicitness == "inscribe") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "self") %>%
+  filter(engagement == "monogloss")%>%
+  filter(graduation == "up")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(NJS_monogloss_up = round(counter/total *100, 2))
+df_NJS_monogloss_up
+```
+
+
+```{r invo NJS monogloss up count, include=TRUE}
+df_invo_NJS_monogloss_up= df%>%
+  filter(valence == "-ve") %>%
+  filter(explicitness == "invoke") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "self") %>%
+  filter(engagement == "monogloss")%>%
+  filter(graduation == "up")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(invo_NJS_monogloss_up = round(counter/total *100, 2))
+df_invo_NJS_monogloss_up
+```
+
+
+```{r NJS monogloss down count, include=TRUE}
+df_NJS_monogloss_down= df%>%
+  filter(valence == "-ve") %>%
+  filter(explicitness == "inscribe") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "self") %>%
+  filter(engagement == "monogloss")%>%
+  filter(graduation == "down")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(NJS_monogloss_down = round(counter/total *100, 2))
+df_NJS_monogloss_down
+```
+
+```{r invo NJS monogloss down count, include=TRUE}
+df_invo_NJS_monogloss_down= df%>%
+  filter(valence == "-ve") %>%
+  filter(explicitness == "invoke") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "self") %>%
+  filter(engagement == "monogloss")%>%
+  filter(graduation == "down")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(invo_NJS_monogloss_down = round(counter/total *100, 2))
+df_invo_NJS_monogloss_down
+```
+
+
+```{r NJS contract noscale count, include=TRUE}
+df_NJS_contract_noscale= df%>%
+  filter(valence == "-ve") %>%
+  filter(explicitness == "inscribe") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "self") %>%
+  filter(engagement == "contract")%>%
+  filter(graduation == "noscale")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(NJS_contract_noscale = round(counter/total *100, 2))
+df_NJS_contract_noscale
+```
+
+```{r invo NJS contract noscale count, include=TRUE}
+df_invo_NJS_contract_noscale= df%>%
+  filter(valence == "-ve") %>%
+  filter(explicitness == "invoke") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "self") %>%
+  filter(engagement == "contract")%>%
+  filter(graduation == "noscale")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(invo_NJS_contract_noscale = round(counter/total *100, 2))
+df_invo_NJS_contract_noscale
+```
+
+
+```{r NJS contract up count, include=TRUE}
+df_NJS_contract_up= df%>%
+  filter(valence == "-ve") %>%
+  filter(explicitness == "inscribe") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "self") %>%
+  filter(engagement == "contract")%>%
+  filter(graduation == "up")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(NJS_contract_up = round(counter/total *100, 2))
+df_NJS_contract_up
+```
+
+```{r invo NJS contract up count, include=TRUE}
+df_invo_NJS_contract_up= df%>%
+  filter(valence == "-ve") %>%
+  filter(explicitness == "invoke") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "self") %>%
+  filter(engagement == "contract")%>%
+  filter(graduation == "up")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(invo_NJS_contract_up = round(counter/total *100, 2))
+df_invo_NJS_contract_up
+```
+
+```{r NJS contract down count, include=TRUE}
+df_NJS_contract_down= df%>%
+  filter(valence == "-ve") %>%
+  filter(explicitness == "inscribe") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "self") %>%
+  filter(engagement == "contract")%>%
+  filter(graduation == "down")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(NJS_contract_down = round(counter/total *100, 2))
+df_NJS_contract_down
+```
+
+
+```{r invo NJS contract down count, include=TRUE}
+df_invo_NJS_contract_down= df%>%
+  filter(valence == "-ve") %>%
+  filter(explicitness == "invoke") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "self") %>%
+  filter(engagement == "contract")%>%
+  filter(graduation == "down")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(invo_NJS_contract_down = round(counter/total *100, 2))
+df_invo_NJS_contract_down
+```
+
+
+```{r NJS entertain noscale count, include=TRUE}
+df_NJS_entertain_noscale= df%>%
+  filter(valence == "-ve") %>%
+  filter(explicitness == "inscribe") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "self") %>%
+  filter(engagement == "entertain")%>%
+  filter(graduation == "noscale")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(NJS_entertain_noscale = round(counter/total *100, 2))
+df_NJS_entertain_noscale
+```
+
+```{r invo NJS entertain noscale count, include=TRUE}
+df_invo_NJS_entertain_noscale= df%>%
+  filter(valence == "-ve") %>%
+  filter(explicitness == "invoke") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "self") %>%
+  filter(engagement == "entertain")%>%
+  filter(graduation == "noscale")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(invo_NJS_entertain_noscale = round(counter/total *100, 2))
+df_invo_NJS_entertain_noscale
+```
+
+
+```{r NJS entertain up count, include=TRUE}
+df_NJS_entertain_up= df%>%
+  filter(valence == "-ve") %>%
+  filter(explicitness == "inscribe") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "self") %>%
+  filter(engagement == "entertain")%>%
+  filter(graduation == "up")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(NJS_entertain_up = round(counter/total *100, 2))
+df_NJS_entertain_up
+```
+
+```{r invo NJS entertain up count, include=TRUE}
+df_invo_NJS_entertain_up= df%>%
+  filter(valence == "-ve") %>%
+  filter(explicitness == "invoke") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "self") %>%
+  filter(engagement == "entertain")%>%
+  filter(graduation == "up")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(invo_NJS_entertain_up = round(counter/total *100, 2))
+df_invo_NJS_entertain_up
+```
+
+```{r NJS entertain down count, include=TRUE}
+df_NJS_entertain_down= df%>%
+  filter(valence == "-ve") %>%
+  filter(explicitness == "inscribe") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "self") %>%
+  filter(engagement == "entertain")%>%
+  filter(graduation == "down")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(NJS_entertain_down = round(counter/total *100, 2))
+df_NJS_entertain_down
+```
+
+```{r invo NJS entertain down count, include=TRUE}
+df_invo_NJS_entertain_down= df%>%
+  filter(valence == "-ve") %>%
+  filter(explicitness == "invoke") %>%
+  filter(attitude == "judgement") %>%
+  filter(target == "self") %>%
+  filter(engagement == "entertain")%>%
+  filter(graduation == "down")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(invo_NJS_entertain_down = round(counter/total *100, 2))
+df_invo_NJS_entertain_down
+```
+
+
+```{r NATA monogloss noscale count, include=TRUE}
+df_NATA_monogloss_noscale= df%>%
+  filter(trigger == "antagonist") %>%
+  filter(engagement == "monogloss")%>%
+  filter(graduation == "noscale")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(NATA_monogloss_noscale = round(counter/total *100, 2))
+df_NATA_monogloss_noscale
+```
+
+
+```{r NATA monogloss up count, include=TRUE}
+df_NATA_monogloss_up= df%>%
+  filter(trigger == "antagonist") %>%
+  filter(engagement == "monogloss")%>%
+  filter(graduation == "up")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(NATA_monogloss_up = round(counter/total *100, 2))
+df_NATA_monogloss_up
+```
+
+```{r NATA monogloss down count, include=TRUE}
+df_NATA_monogloss_down= df%>%
+  filter(trigger == "antagonist") %>%
+  filter(engagement == "monogloss")%>%
+  filter(graduation == "down")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(NATA_monogloss_down = round(counter/total *100, 2))
+df_NATA_monogloss_down
+```
+
+```{r NATA contract noscale count, include=TRUE}
+df_NATA_contract_noscale= df%>%
+  filter(trigger == "antagonist") %>%
+  filter(engagement == "contract")%>%
+  filter(graduation == "noscale")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(NATA_contract_noscale = round(counter/total *100, 2))
+df_NATA_contract_noscale
+```
+
+
+```{r NATA contract up count, include=TRUE}
+df_NATA_contract_up= df%>%
+  filter(trigger == "antagonist") %>%
+  filter(engagement == "contract")%>%
+  filter(graduation == "up")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(NATA_contract_up = round(counter/total *100, 2))
+df_NATA_contract_up
+```
+
+```{r NATA contract down count, include=TRUE}
+df_NATA_contract_down= df%>%
+  filter(trigger == "antagonist") %>%
+  filter(engagement == "contract")%>%
+  filter(graduation == "down")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(NATA_contract_down = round(counter/total *100, 2))
+df_NATA_contract_down
+```
+
+
+```{r NATA entertain noscale count, include=TRUE}
+df_NATA_entertain_noscale= df%>%
+  filter(trigger == "antagonist") %>%
+  filter(engagement == "entertain")%>%
+  filter(graduation == "noscale")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(NATA_entertain_noscale = round(counter/total *100, 2))
+df_NATA_entertain_noscale
+```
+
+
+```{r NATA entertain up count, include=TRUE}
+df_NATA_entertain_up= df%>%
+  filter(trigger == "antagonist") %>%
+  filter(engagement == "entertain")%>%
+  filter(graduation == "up")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(NATA_entertain_up = round(counter/total *100, 2))
+df_NATA_entertain_up
+```
+
+```{r NATA entertain down count, include=TRUE}
+df_NATA_entertain_down= df%>%
+  filter(trigger == "antagonist") %>%
+  filter(engagement == "entertain")%>%
+  filter(graduation == "down")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(NATA_entertain_down = round(counter/total *100, 2))
+df_NATA_entertain_down
+```
+```{r OAA monogloss noscale count, include=TRUE}
+df_OAA_monogloss_noscale= df%>%
+  filter(trigger == "observed") %>%
+  filter(engagement == "monogloss")%>%
+  filter(graduation == "noscale")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(OAA_monogloss_noscale = round(counter/total *100, 2))
+df_OAA_monogloss_noscale
+```
+
+
+```{r OAA monogloss up count, include=TRUE}
+df_OAA_monogloss_up= df%>%
+  filter(trigger == "observed") %>%
+  filter(engagement == "monogloss")%>%
+  filter(graduation == "up")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(OAA_monogloss_up = round(counter/total *100, 2))
+df_OAA_monogloss_up
+```
+
+```{r OAA monogloss down count, include=TRUE}
+df_OAA_monogloss_down= df%>%
+  filter(trigger == "observed") %>%
+  filter(engagement == "monogloss")%>%
+  filter(graduation == "down")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(OAA_monogloss_down = round(counter/total *100, 2))
+df_OAA_monogloss_down
+```
+
+
+```{r OAA contract noscale count, include=TRUE}
+df_OAA_contract_noscale= df%>%
+  filter(trigger == "observed") %>%
+  filter(engagement == "contract")%>%
+  filter(graduation == "noscale")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(OAA_contract_noscale = round(counter/total *100, 2))
+df_OAA_contract_noscale
+```
+
+
+```{r OAA contract up count, include=TRUE}
+df_OAA_contract_up= df%>%
+  filter(trigger == "observed") %>%
+  filter(engagement == "contract")%>%
+  filter(graduation == "up")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(OAA_contract_up = round(counter/total *100, 2))
+df_OAA_contract_up
+```
+
+```{r OAA contract down count, include=TRUE}
+df_OAA_contract_down= df%>%
+  filter(trigger == "observed") %>%
+  filter(engagement == "contract")%>%
+  filter(graduation == "down")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(OAA_contract_down = round(counter/total *100, 2))
+df_OAA_contract_down
+```
+
+
+```{r OAA entertain noscale count, include=TRUE}
+df_OAA_entertain_noscale= df%>%
+  filter(trigger == "observed") %>%
+  filter(engagement == "entertain")%>%
+  filter(graduation == "noscale")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(OAA_entertain_noscale = round(counter/total *100, 2))
+df_OAA_entertain_noscale
+```
+
+
+```{r OAA entertain up count, include=TRUE}
+df_OAA_entertain_up= df%>%
+  filter(trigger == "observed") %>%
+  filter(engagement == "entertain")%>%
+  filter(graduation == "up")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(OAA_entertain_up = round(counter/total *100, 2))
+df_OAA_entertain_up
+```
+
+```{r OAA entertain down count, include=TRUE}
+df_OAA_entertain_down= df%>%
+  filter(trigger == "observed") %>%
+  filter(engagement == "entertain")%>%
+  filter(graduation == "down")%>%
+  group_by(speaker, total, gender, waywardness)%>%
+  summarise(counter = sum(counter)) %>%
+  #filter(counter>1)%>%
+  mutate(OAA_entertain_down = round(counter/total *100, 2))
+df_OAA_entertain_down
+```
+
+
+```{r 58 scaling+engagement occurrence dataframe, include=TRUE}
+#scaling+engagement occurrence dataframe
+df_scaling_engagement_occurrence <- Reduce(mymerge, list(
+                                                     df_NJA_monogloss_noscale, df_NJA_monogloss_up, df_NJA_monogloss_down, df_NJA_contract_noscale, df_NJA_contract_up, df_NJA_contract_down,df_NJA_entertain_noscale, df_NJA_entertain_up, df_NJA_entertain_down,
+                                                     df_PJA_monogloss_noscale, df_PJA_monogloss_up, df_PJA_monogloss_down, df_PJA_contract_noscale, df_PJA_contract_up, df_PJA_contract_down, df_PJA_entertain_noscale, df_PJA_entertain_up, df_PJA_entertain_down,
+                                                     df_NJS_monogloss_noscale, df_NJS_monogloss_up, df_NJS_monogloss_down, df_NJS_contract_noscale, df_NJS_contract_up, df_NJS_contract_down, df_NJS_entertain_noscale, df_NJS_entertain_up, df_NJS_entertain_down,
+                                                     df_PJS_monogloss_noscale, df_PJS_monogloss_up, df_PJS_monogloss_down, df_PJS_contract_noscale, df_PJS_contract_up, df_PJS_contract_down, df_PJS_entertain_noscale, df_PJS_entertain_up, df_PJS_entertain_down,
+                                                     df_invo_NJA,
+                                                     df_invo_PJA,
+                                                     df_invo_NJS,
+                                                     df_invo_PJS,
+                                                     df_NATA_monogloss_noscale, df_NATA_monogloss_up, df_NATA_monogloss_down, df_NATA_contract_noscale, df_NATA_contract_up, df_NATA_contract_down, df_NATA_entertain_noscale, df_NATA_entertain_up, df_NATA_entertain_down,
+                                                     df_OAA_monogloss_noscale, df_OAA_monogloss_up, df_OAA_monogloss_down, df_OAA_contract_noscale, df_OAA_contract_up, df_OAA_contract_down, df_OAA_entertain_noscale, df_OAA_entertain_up, df_OAA_entertain_down
+                                                     ))%>% 
+  ungroup()%>%
+  select(speaker, 
+         NJA_monogloss_noscale, PJA_monogloss_noscale, NJS_monogloss_noscale, PJS_monogloss_noscale, NATA_monogloss_noscale, OAA_monogloss_noscale,
+         NJA_monogloss_up, PJA_monogloss_up, NJS_monogloss_up, PJS_monogloss_up, NATA_monogloss_up, OAA_monogloss_up,
+         NJA_monogloss_down, PJA_monogloss_down, NJS_monogloss_down, PJS_monogloss_down, NATA_monogloss_down, OAA_monogloss_down, 
+         NJA_contract_noscale, PJA_contract_noscale, NJS_contract_noscale, PJS_contract_noscale, NATA_contract_noscale, OAA_contract_noscale, 
+         NJA_contract_up, PJA_contract_up, NJS_contract_up, PJS_contract_up, NATA_contract_up, OAA_contract_up,
+         NJA_contract_down, PJA_contract_down, NJS_contract_down, PJS_contract_down, NATA_contract_down, OAA_contract_down,
+         NJA_entertain_noscale, PJA_entertain_noscale, NJS_entertain_noscale, PJS_entertain_noscale, NATA_entertain_noscale, OAA_entertain_noscale,
+         NJA_entertain_up, PJA_entertain_up, NJS_entertain_up, PJS_entertain_up, NATA_entertain_up, OAA_entertain_up,
+         NJA_entertain_down, PJA_entertain_down, NJS_entertain_down, PJS_entertain_down, NATA_entertain_down, OAA_entertain_down, 
+         invo_NJA, invo_PJA, invo_NJS, invo_PJS 
+         )%>%
+  replace(is.na(.), 0)%>%
+  mutate_if(is.numeric, ~1 * (. != 0))%>%
+  column_to_rownames(var = "speaker")
+  
+df_scaling_engagement_occurrence
+```
+
+```{r filtered occurrence data frame}
+df_filtered_scaling_engagement_occurrence <- df_scaling_engagement_occurrence[, which(colSums(df_scaling_engagement_occurrence != 0) > 0), drop = FALSE]
+df_filtered_scaling_engagement_occurrence
+```
+
+
+```{r 43 scaling+engagement occurrence how many clusters, include=TRUE}
+#43 scaling+engagement occurrence how many clusters
+set.seed(123)
+fviz_nbclust(df_filtered_scaling_engagement_occurrence, kmeans, method = "silhouette")
+```
+
+
+```{r 43 scaling+engagement occurrence cluster}
+#43 scaling+engagement occurrence cluster
+#png("43_scaling_engagement_occurrence_cluster.png", units="in", width=10, height=5, res=100)
+hcl_scaling_engagement_occurrence=hclust(dist(df_scaling_engagement_occurrence), method="complete")
+plot(hcl_scaling_engagement_occurrence, hang= -1)
+rect.hclust(hcl_scaling_engagement_occurrence, h = 4.5, border = "red")
+```
+
+
+```{r 43 scaling+engagement ratio dataframe, include=TRUE}
+#43 scaling+engagement ratio dataframe
+df_scaling_engagement_ratio <- Reduce(mymerge, list(df_NJA_monogloss_noscale, df_NJA_monogloss_up, df_NJA_monogloss_down, df_NJA_contract_noscale, df_NJA_contract_up, df_NJA_contract_down,df_NJA_entertain_noscale, df_NJA_entertain_up, df_NJA_entertain_down,
+                                                     df_PJA_monogloss_noscale, df_PJA_monogloss_up, df_PJA_monogloss_down, df_PJA_contract_noscale, df_PJA_contract_up, df_PJA_contract_down, df_PJA_entertain_noscale, df_PJA_entertain_up, df_PJA_entertain_down,
+                                                     df_NJS_monogloss_noscale, df_NJS_monogloss_up, df_NJS_monogloss_down, df_NJS_contract_noscale, df_NJS_contract_up, df_NJS_contract_down, df_NJS_entertain_noscale, df_NJS_entertain_up, df_NJS_entertain_down,
+                                                     df_PJS_monogloss_noscale, df_PJS_monogloss_up, df_PJS_monogloss_down, df_PJS_contract_noscale, df_PJS_contract_up, df_PJS_contract_down, df_PJS_entertain_noscale, df_PJS_entertain_up, df_PJS_entertain_down,
+                                                     df_invo_NJA,
+                                                     df_invo_PJA,
+                                                     df_invo_NJS,
+                                                     df_invo_PJS,
+                                                     df_NATA_monogloss_noscale, df_NATA_monogloss_up, df_NATA_monogloss_down, df_NATA_contract_noscale, df_NATA_contract_up, df_NATA_contract_down, df_NATA_entertain_noscale, df_NATA_entertain_up, df_NATA_entertain_down,
+                                                     df_OAA_monogloss_noscale, df_OAA_monogloss_up, df_OAA_monogloss_down, df_OAA_contract_noscale, df_OAA_contract_up, df_OAA_contract_down, df_OAA_entertain_noscale, df_OAA_entertain_up, df_OAA_entertain_down)) %>% 
+  replace(is.na(.), 0)%>%
+  ungroup()%>%
+  select(speaker, 
+         NJA_monogloss_noscale, PJA_monogloss_noscale, NJS_monogloss_noscale, PJS_monogloss_noscale, NATA_monogloss_noscale, OAA_monogloss_noscale,
+         NJA_monogloss_up, PJA_monogloss_up, NJS_monogloss_up, PJS_monogloss_up, NATA_monogloss_up, OAA_monogloss_up,
+         NJA_monogloss_down, PJA_monogloss_down, NJS_monogloss_down, PJS_monogloss_down, NATA_monogloss_down, OAA_monogloss_down, 
+         NJA_contract_noscale, PJA_contract_noscale, NJS_contract_noscale, PJS_contract_noscale, NATA_contract_noscale, OAA_contract_noscale, 
+         NJA_contract_up, PJA_contract_up, NJS_contract_up, PJS_contract_up, NATA_contract_up, OAA_contract_up,
+         NJA_contract_down, PJA_contract_down, NJS_contract_down, PJS_contract_down, NATA_contract_down, OAA_contract_down,
+         NJA_entertain_noscale, PJA_entertain_noscale, NJS_entertain_noscale, PJS_entertain_noscale, NATA_entertain_noscale, OAA_entertain_noscale,
+         NJA_entertain_up, PJA_entertain_up, NJS_entertain_up, PJS_entertain_up, NATA_entertain_up, OAA_entertain_up,
+         NJA_entertain_down, PJA_entertain_down, NJS_entertain_down, PJS_entertain_down, NATA_entertain_down, OAA_entertain_down, 
+         invo_NJA, invo_PJA, invo_NJS, invo_PJS)%>%
+  column_to_rownames(var = "speaker")
+  
+df_filtered_scaling_engagement_ratio <- df_scaling_engagement_ratio[, sapply(df_scaling_engagement_ratio, is.numeric) & colSums(df_scaling_engagement_ratio) > 0, drop = FALSE]
+
+
+```
+
+```{r 43 scaling+engagement ratio how many clusters, include=TRUE}
+#43 scaling+engagement ratio how many clusters
+#png("scaling_engagement_ratio_how many.png", units="in", width=10, height=5, res=100)
+set.seed(123)
+fviz_nbclust(df_filtered_scaling_engagement_ratio, kmeans, method = "silhouette")
+```
+
+
+
+```{r 43 scaling+engagement ratio group individuals}
+#43 scaling+engagement ratio group individuals
+#png("scaling_engagement_ratio.png", units="in", width=10, height=8, res=100)
+scaling_engagement_ratio.pca <- PCA(df_filtered_scaling_engagement_ratio, graph = FALSE)
+scaling_engagement_ratio.ind <- get_pca_ind(scaling_engagement_ratio.pca)
+res.km <- kmeans(scaling_engagement_ratio.ind$coord, centers = 3, nstart = 25)
+grp <- as.factor(res.km$cluster)
+# Color variables by groups
+fviz_pca_biplot(scaling_engagement_ratio.pca, col.ind = grp, 
+             palette = c("#0073C2FF", "#800080", "#00FF00", "#00AFBB"),
+             col.var = "red",
+             repel = TRUE,
+             addEllipses = TRUE, ellipse.type = "convex", #plot convex hull of a set o points
+             legend.title = "Cluster",
+             title = "Cluster plot: per ratio of 'scaling + dialogistic framing + attitudinal complex' options")
+```
+
+```{r 43 scaling+engagement gender waywardness dataframe, include=TRUE}
+df_filtered_scaling_engagement_gw <- df_filtered_scaling_engagement_ratio %>%
+  mutate(gender = ifelse(grepl("Husband", rownames(df_filtered_scaling_engagement_ratio)), "male", "female")) %>%
+  mutate(waywardness = ifelse(grepl("AH", rownames(df_filtered_scaling_engagement_ratio)), "aggrieved", 
+                              ifelse(grepl("AW", rownames(df_filtered_scaling_engagement_ratio)), "aggrieved", "wayward")))
+
+```
+
+```{r individuals waywardness}
+#png("individuals_waywardness.png", units="in", width=10, height=8, res=100)
+scaling_engagement_gw.pca <- PCA(df_filtered_scaling_engagement_gw[, c(1:43)], graph = FALSE)
+
+fviz_pca_biplot(scaling_engagement_gw.pca, col.ind = df_filtered_scaling_engagement_gw$waywardness, 
+            col.var = "#EFC000FF",
+            palette = c("#FF0000FF", "#0000FFFF"),
+            geom.var = "text",
+            repel = TRUE,
+            addEllipses = TRUE, ellipse.type = "euclid", 
+            legend.title = "Waywardness",
+            title = "PCA Biplot: speakers grouped by waywardness"
+            )
+```
+
+```{r individuals gender, include=TRUE}
+#png("individuals_gender.png", units="in", width=10, height=8, res=100)
+
+fviz_pca_biplot(scaling_engagement_gw.pca, col.ind = df_filtered_scaling_engagement_gw$gender, 
+            col.var = "#EFC000FF",
+            palette = c("#FF0000FF", "#0000FFFF"),
+            geom.var = "text",
+            repel = TRUE,
+            #addEllipses = TRUE, ellipse.type = "euclid", 
+            legend.title = "Gender",
+            title = "PCA Biplot: speakers grouped by gender"
+            )
+```
