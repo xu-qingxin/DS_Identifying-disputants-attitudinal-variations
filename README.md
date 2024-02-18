@@ -1,4 +1,4 @@
-# DS_Identifying-disputants-attitudinal-variations
+# Identifying disputants' attitudinal variations
 Replication data and scripts for: Xu, Qingxin (2024). Identifying disputants’ attitudinal variations in family mediations: A data mining approach.
 
 Research overview:
